@@ -42,20 +42,38 @@ def getfreehost(config_dir):
   gcfg = json.loads(fp.read())
   num = -1
   rethost = ""
-  for host in gcfg:
+  for host in gcfg["hosts"]:
     if num == -1:
-      if len(gcfg[host]["ports_used"]) != len(gcfg[host]["ports"]):
-        num = len(gcfg[host]["ports_used"]) 
+      if len(gcfg["hosts"][host]["ports_used"]) != len(gcfg["hosts"][host]["ports"]):
+        num = len(gcfg["hosts"][host]["ports_used"]) 
         rethost = host
-    elif len(gcfg[host]["ports_used"]) != len(gcfg[host]["ports"]):
-      if len(gcfg[host]["ports"]) < num:
-        num = len(gcfg[host]["ports"])
+    elif len(gcfg["hosts"][host]["ports_used"]) != len(gcfg["hosts"][host]["ports"]):
+      if len(gcfg["hosts"][host]["ports"]) < num:
+        num = len(gcfg["hosts"][host]["ports"])
         rethost = host
   if len(rethost) == 0:
     print "Failed to find a free host!"
     sys.exit(2)
   return rethost
  
+def cfgserver(config_dir, app, host, cfg):
+  obj = None
+  try:
+    obj = get_app_config(config_dir, app)
+  except OSError,e:
+    print (e.strerror)
+    sys.exit(2)
+
+  for server in obj["servers"]:
+    if server["host"] == host:
+      for k in cfg:
+        server[k] = cfg[k] 
+      break
+  write_config(config_dir, app, obj)
+  print host
+  sys.exit(0)
+
+
 def addserver(config_dir, app, host, cfg):
   obj = {}
   if len(host) == 0:
@@ -76,19 +94,20 @@ def addserver(config_dir, app, host, cfg):
     print (e.strerror)
     sys.exit(2)
 
-  obj = {"host": host}
+  nobj = {"host": host}
   version=""
   if "version" in cfg:
     version = cfg["version"] 
-  obj["version"] = version
+  nobj["version"] = version
 
   if "instance" in cfg:
-    obj["instance"] = cfg["instance"]
+    nobj["instance"] = cfg["instance"]
   else:
-    obj["instance"] = ""
+    nobj["instance"] = ""
 
-  obj["servers"].append( "version":version})
+  obj["servers"].append(nobj)
   write_config(config_dir, app, obj)
+  print host
   sys.exit(0)
 
 def rmserver(config_dir, app, host, cfg):
@@ -117,14 +136,14 @@ def rmserver(config_dir, app, host, cfg):
 
 def listservers(config_dir, cfg):
   if "version" in cfg and "app" in cfg:
-    appcfg = get_app_config(config_dir, app) 
+    appcfg = get_app_config(config_dir, cfg["app"]) 
     for server in appcfg["servers"]:
-      if server["version"] == cfg["version"] 
+      if server["version"] == cfg["version"]:
         print(server["host"]+" "+server["version"]+" "+server["instance"])
     return
   
   if "app" in cfg:
-    appcfg = get_app_config(config_dir, app) 
+    appcfg = get_app_config(config_dir, cfg["app"]) 
     for server in appcfg["servers"]:
       print(server["host"]+" "+server["version"]+" "+server["instance"])
     return
@@ -136,6 +155,7 @@ def listservers(config_dir, cfg):
           print(server["host"]+" "+server["version"]+" "+server["instance"])
     return
    
+# FIXME need to deallocate ports
 def rmapp(config_dir, app):
   try:
     shutil.rmtree(config_dir+"/"+app)
@@ -156,12 +176,20 @@ def addapp(config_dir, app, host, cfg):
     sys.exit(2)
 
   if len(host) == 0:
-    print ("You need to specify a host")
-    sys.exit(2)
+    # need to select a host
+    host = getfreehost(config_dir)
+
+  if ":" not in host:
+    port = getport(config_dir, host) 
+    host = host + ":" + str(port)
 
   version = ""
   if "version" in cfg:
     version = cfg["version"]
+ 
+  instance = ""
+  if "instance" in cfg:
+    instance = cfg["instance"]
  
   if not checkservers(config_dir, host):
     print ("server has already been added")
@@ -170,11 +198,12 @@ def addapp(config_dir, app, host, cfg):
   try:
     os.mkdir(config_dir+"/"+app)
     obj = {"url":cfg["url"], "servers":[]}
-    obj["servers"].append({"host":host,"version": version})
+    obj["servers"].append({"host":host,"version": version, "instance": instance})
     write_config(config_dir, app, obj)
   except OSError,e:
     print (e.strerror)
     sys.exit(2)
+  print host
   sys.exit(0)
 
 def listconfig(config_dir):
@@ -224,6 +253,7 @@ def addhost(config_dir, host, port_range):
   fp.write(json.dumps(gcfg))
   fp.close()
 
+#FIXME need to add a way to update the app entries as well
 def rmhost(config_dir, host):
   fp = open(config_dir+"/host_config","r")
   gcfg = json.loads(fp.read())
@@ -245,23 +275,21 @@ def chooseport(ports, ports_used):
 def getport(config_dir, host):
   fp = open(config_dir+"/host_config","r")
   gcfg = json.loads(fp.read())
-  ret = chooseport(gcfg[host]["ports"], gcfg[host]["ports_used"])
+  ret = chooseport(gcfg["hosts"][host]["ports"], gcfg["hosts"][host]["ports_used"])
   if ret < 0:
     print ("No free ports in "+host)
     sys.exit(2)
-  gcfg[host]["ports_used"].append(ret)  
+  gcfg["hosts"][host]["ports_used"].append(ret)  
   fp.close()
   fp = open(config_dir+"/host_config","w")
   fp.write(json.dumps(gcfg))
   fp.close()
-
-
   return ret
 
 def returnport(config_dir, host, port):
   fp = open(config_dir+"/host_config","r")
   gcfg = json.loads(fp.read())
-  gcfg[host]["ports_used"].remove(int(port))
+  gcfg["hosts"][host]["ports_used"].remove(int(port))
   fp.close()
   fp = open(config_dir+"/host_config","w")
   fp.write(json.dumps(gcfg))
@@ -302,22 +330,43 @@ def main():
   config_dir = remove_trailing_slash(config_dir)
 
   if option == "none":
-    print("Please pass a proper option (-o) [addserver|rmserver|addapp|rmapp|listconfig]")
+    print("Please pass a proper option (-o) [addhost|rmhost|addserver|cfgserver|rmserver|addapp|rmapp|listconfig|listservers]")
     usage()
     sys.exit(2)
 
-  if len(app) == 0 and option != "listconfig":
-    print("app(-a) is mandatory\n")
-    usage()
-    sys.exit(2) 
-
   if option == "addserver":
+    if len(app) == 0:
+      print("app(-a) is mandatory\n")
+      usage()
+      sys.exit(2) 
     addserver(config_dir, app, host, cfg)
+  elif option == "cfgserver":
+    if len(app) == 0:
+      print("app(-a) is mandatory\n")
+      usage()
+      sys.exit(2) 
+
+    cfgserver(config_dir, app, host, cfg)
   elif option == "rmserver":
+    if len(app) == 0:
+      print("app(-a) is mandatory\n")
+      usage()
+      sys.exit(2) 
+
     rmserver(config_dir, app, host, cfg)
   elif option == "addapp":
+    if len(app) == 0:
+      print("app(-a) is mandatory\n")
+      usage()
+      sys.exit(2) 
+
     addapp(config_dir, app, host, cfg)
   elif option == "rmapp":
+    if len(app) == 0:
+      print("app(-a) is mandatory\n")
+      usage()
+      sys.exit(2) 
+
     rmapp(config_dir, app)
   elif option == "listconfig":
     listconfig(config_dir)
