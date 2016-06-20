@@ -37,8 +37,35 @@ def write_config(config_dir, app, obj):
   fp.write(json.dumps(obj))
   fp.close()
 
+def getfreehost(config_dir):
+  fp = open(config_dir+"/host_config","r")
+  gcfg = json.loads(fp.read())
+  num = -1
+  rethost = ""
+  for host in gcfg:
+    if num == -1:
+      if len(gcfg[host]["ports_used"]) != len(gcfg[host]["ports"]):
+        num = len(gcfg[host]["ports_used"]) 
+        rethost = host
+    elif len(gcfg[host]["ports_used"]) != len(gcfg[host]["ports"]):
+      if len(gcfg[host]["ports"]) < num:
+        num = len(gcfg[host]["ports"])
+        rethost = host
+  if len(rethost) == 0:
+    print "Failed to find a free host!"
+    sys.exit(2)
+  return rethost
+ 
 def addserver(config_dir, app, host, cfg):
   obj = {}
+  if len(host) == 0:
+    # need to select a host
+    host = getfreehost(config_dir)
+
+  if ":" not in host:
+    port = getport(config_dir, host) 
+    host = host + ":" + str(port)
+
   if not checkservers(config_dir, host):
     print("Server is already added")
     sys.exit(2)
@@ -58,6 +85,10 @@ def addserver(config_dir, app, host, cfg):
   sys.exit(0)
 
 def rmserver(config_dir, app, host, cfg):
+  if ":" not in host:
+    print ("I need the full server name hostname:port to remove")
+    sys.exit(2)
+
   obj = {}
   try:
     obj = get_app_config(config_dir, app)
@@ -74,8 +105,11 @@ def rmserver(config_dir, app, host, cfg):
     print ("Cant remove last server from the app")
     sys.exit(2)
   write_config(config_dir, app, obj)
+  returnport(config_dir, host.split(":")[0], host.split(":")[1])
   sys.exit(0)
 
+def listservers(config_dir, cfg):
+  
 def rmapp(config_dir, app):
   try:
     shutil.rmtree(config_dir+"/"+app)
@@ -133,6 +167,80 @@ def listconfig(config_dir):
       print("    " + server["host"]+", version: "+version)
     print("")
 
+def gen_range(r):
+  litems = []
+  items = r.split(",")
+  for item in items:
+    if '-' not in item:
+      litems.append(int(item))
+    else:
+      idx = item.split("-")
+      for i in range(int(idx[0]), int(idx[1])):
+        litems.append(i)
+  return litems
+      
+def addhost(config_dir, host, port_range):
+  fp = None
+  try:
+    fp = open(config_dir+"/host_config","r")
+    gcfg = json.loads(fp.read())
+  except:
+    gcfg = {"hosts":{}} 
+  l = gen_range(port_range)
+  if host not in gcfg["hosts"]:
+    gcfg["hosts"][host] = {"ports":l,"ports_used":[]} 
+  else:
+    #modification case
+    gcfg["hosts"][host] = {"ports":l,"ports_used":[]} 
+  if fp:
+    fp.close()
+  fp = open(config_dir+"/host_config","w")
+  fp.write(json.dumps(gcfg))
+  fp.close()
+
+def rmhost(config_dir, host):
+  fp = open(config_dir+"/host_config","r")
+  gcfg = json.loads(fp.read())
+  l = gen_range(port_range)
+  if host in gcfg["hosts"]:
+    del(gcfg["hosts"][host]) 
+  fp.close()
+  fp = open(config_dir+"/host_config","w")
+  fp.write(json.dumps(gcfg))
+  fp.close()
+
+def chooseport(ports, ports_used):
+  selected = -1
+  for i in ports:
+    if i not in ports_used:
+      selected = i;
+  return selected
+ 
+def getport(config_dir, host):
+  fp = open(config_dir+"/host_config","r")
+  gcfg = json.loads(fp.read())
+  ret = chooseport(gcfg[host]["ports"], gcfg[host]["ports_used"])
+  if ret < 0:
+    print ("No free ports in "+host)
+    sys.exit(2)
+  gcfg[host]["ports_used"].append(ret)  
+  fp.close()
+  fp = open(config_dir+"/host_config","w")
+  fp.write(json.dumps(gcfg))
+  fp.close()
+
+
+  return ret
+
+def returnport(config_dir, host, port):
+  fp = open(config_dir+"/host_config","r")
+  gcfg = json.loads(fp.read())
+  gcfg[host]["ports_used"].remove(int(port))
+  fp.close()
+  fp = open(config_dir+"/host_config","w")
+  fp.write(json.dumps(gcfg))
+  fp.close()
+ 
 def main():
   try:
     opts, args = getopt.getopt(sys.argv[1:], "c:o:h:v:a:", [])
@@ -167,20 +275,15 @@ def main():
 
   config_dir = remove_trailing_slash(config_dir)
 
+  if option == "none":
+    print("Please pass a proper option (-o) [addserver|rmserver|addapp|rmapp|listconfig]")
+    usage()
+    sys.exit(2)
+
   if len(app) == 0 and option != "listconfig":
     print("app(-a) is mandatory\n")
     usage()
     sys.exit(2) 
-
-  if option == "addserver" and len(host) == 0:
-    print("host (-h) is mandatory\n")
-    usage()
-    sys.exit(2) 
-
-  if option == "none":
-    print("Please pass a proper option (-o) [addserver|rmserver|addapp|rmapp]")
-    usage()
-    sys.exit(2)
 
   if option == "addserver":
     addserver(config_dir, app, host, cfg)
@@ -192,6 +295,13 @@ def main():
     rmapp(config_dir, app)
   elif option == "listconfig":
     listconfig(config_dir)
+  elif option == "addhost":
+    if "range" not in cfg:
+      print("need to have a port range to add a host")
+      sys.exit(2)
+    addhost(config_dir, host, cfg["range"])
+  elif option == "rmhost":
+    rmhost(config_dir, host)
   else:
     print("Unknown command:"+option) 
     sys.exit(2)
