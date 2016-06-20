@@ -76,11 +76,18 @@ def addserver(config_dir, app, host, cfg):
     print (e.strerror)
     sys.exit(2)
 
+  obj = {"host": host}
   version=""
   if "version" in cfg:
     version = cfg["version"] 
+  obj["version"] = version
 
-  obj["servers"].append({"host": host, "version":version})
+  if "instance" in cfg:
+    obj["instance"] = cfg["instance"]
+  else:
+    obj["instance"] = ""
+
+  obj["servers"].append( "version":version})
   write_config(config_dir, app, obj)
   sys.exit(0)
 
@@ -109,7 +116,26 @@ def rmserver(config_dir, app, host, cfg):
   sys.exit(0)
 
 def listservers(config_dir, cfg):
+  if "version" in cfg and "app" in cfg:
+    appcfg = get_app_config(config_dir, app) 
+    for server in appcfg["servers"]:
+      if server["version"] == cfg["version"] 
+        print(server["host"]+" "+server["version"]+" "+server["instance"])
+    return
   
+  if "app" in cfg:
+    appcfg = get_app_config(config_dir, app) 
+    for server in appcfg["servers"]:
+      print(server["host"]+" "+server["version"]+" "+server["instance"])
+    return
+
+  if "host" in cfg:
+    for appcfg in get_apps(config_dir):
+      for server in appcfg["servers"]:
+        if server["host"] == cfg["host"]:
+          print(server["host"]+" "+server["version"]+" "+server["instance"])
+    return
+   
 def rmapp(config_dir, app):
   try:
     shutil.rmtree(config_dir+"/"+app)
@@ -302,6 +328,8 @@ def main():
     addhost(config_dir, host, cfg["range"])
   elif option == "rmhost":
     rmhost(config_dir, host)
+  elif option == "listservers":
+    listservers(config_dir, cfg)
   else:
     print("Unknown command:"+option) 
     sys.exit(2)
