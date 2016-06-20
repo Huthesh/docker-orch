@@ -1,0 +1,6 @@
+{
+"url":"/app2/",
+"servers":[
+  {"host": "localhost:9011"}]
+}
+  
