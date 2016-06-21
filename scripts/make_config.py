@@ -43,23 +43,49 @@ def add_servers(outputfp, app, cfg):
     outputfp.write("  server host"+str(host)+" "+server["host"]+"\n")
     host = host + 1
 
+def compute_acl(app,obj):
+  rules = []
+  idx = 0
+  if "acl" in obj:
+    if type(obj["acl"]) is str:
+      rules.append("  acl "+app+str(idx)+" "+obj["acl"]+"\n") 
+      idx+=1
+    else:
+      for acl in obj["acl"]:
+        rules.append("  acl "+app+str(idx)+" "+acl+"\n")
+        idx += 1
+  if "url" in obj:
+    if type(obj["url"]) is str:
+      rules.append("  acl "+app+str(idx)+" path_beg -i "+obj["url"]+"\n") 
+      idx +=1
+    else:
+      for url in obj["url"]:
+        rules.append("  acl "+app+str(idx)+" path_beg -i "+url+"\n")
+        idx+=1
+  return rules
+
 def write_config(outputfp, config_dir, port):
   outputfp.write("frontend web\n")
   outputfp.write("  bind *:"+str(port)+"\n")
   apps = get_apps(config_dir)
   cfgs={}
+  numrules={}
   for app in apps:
     obj = get_app_config(config_dir, app)
     cfgs[app]=obj
-    outputfp.write("  acl "+app+" path_beg -i "+ obj["url"] + "\n")
+    rules = compute_acl(app,obj):
+    for rule in rules:
+      outputfp.write(rule)
+    numrules[app] = len(rules)
   outputfp.write("\n") 
 
   for app in apps:
-    outputfp.write("use_backend srvs_"+app+"   if "+app+"\n")
+    for a in range(numrules[app]):
+      outputfp.write("use_backend srvs_"+app+"   if "+app+str(a)+"\n")
   outputfp.write("\n") 
 
   for app in apps:
-    outputfp.write("backend srvx_"+app+"\n")
+    outputfp.write("backend srvs_"+app+"\n")
     outputfp.write("  balance roundrobin\n")
     add_servers(outputfp, app, cfgs[app])
     outputfp.write("\n") 
@@ -69,6 +95,10 @@ def remove_trailing_slash(s):
   if s[len(s) - 1] == '/':
     return s[:len(s)-1]
   return s
+
+def write_haproxy_config(config_dir, output_dir, port):
+  outputfp = add_global(config_dir, output_dir)
+  write_config(outputfp, config_dir, port)
 
 def main():
   try:
@@ -100,8 +130,7 @@ def main():
   if clean_output(output_dir) == 1:
     print "Output dir cant be removed"
     sys.exit(2)
-  outputfp = add_global(config_dir, output_dir)
-  write_config(outputfp, config_dir, port)
+  write_haproxy_config(config_dir, output_dir)
 
 if __name__ == "__main__":
   main()

@@ -2,7 +2,9 @@ import getopt,sys
 import shutil
 import json
 import os
-
+from driver import run_container, stop_container
+from make_config import write_haproxy_config
+from tempfile import mkdtemp
 def usage():
   print "mod_config.py -c <config dir> -a <app> -o <addserver|addapp|rmserver|rmapp> -h <hostname> -v <optional keyvalues>"
 
@@ -79,7 +81,7 @@ def addserver(config_dir, app, host, cfg):
   if len(host) == 0:
     # need to select a host
     host = getfreehost(config_dir)
-
+  port = 0
   if ":" not in host:
     port = getport(config_dir, host) 
     host = host + ":" + str(port)
@@ -103,8 +105,11 @@ def addserver(config_dir, app, host, cfg):
   if "instance" in cfg:
     nobj["instance"] = cfg["instance"]
   else:
-    nobj["instance"] = ""
-
+    nobj["instance"] = host
+  output,rc = run_container(host.split(":")[0], [host.split(":")[1],obj["imageport"]],obj["image"],nobj["instance"])
+  if rc != 0:
+    print("Failed to start container")
+    sys.exit(2)
   obj["servers"].append(nobj)
   write_config(config_dir, app, obj)
   print host
@@ -123,13 +128,24 @@ def rmserver(config_dir, app, host, cfg):
     sys.exit(2)
 
   result = []
+  delserver = None
   for server in obj["servers"]:
     if server["host"] != host:
       result.append(server)
-  obj["servers"] = result
-  if len(obj["servers"]) == 0:
+    else:
+      delserver = server
+
+  if len(result) == 0:
     print ("Cant remove last server from the app")
     sys.exit(2)
+
+  obj["servers"] = result
+  # now do the actual removal
+  output,rc = stop_container(host.split(":")[0], delserver["instance"])
+  if rc != 0:
+    print ("Failed to stop container")
+    sys.exit(2)
+ 
   write_config(config_dir, app, obj)
   returnport(config_dir, host.split(":")[0], host.split(":")[1])
   sys.exit(0)
@@ -171,17 +187,28 @@ def addapp(config_dir, app, host, cfg):
       print("App already exists")
       sys.exit(2)
 
-  if "url" not in cfg:
-    print ("You need to pass in a url for the app")
+  if "url" not in cfg and "acl" not in cfg:
+    print ("You need to pass in atleast one url or acl for the app")
+    sys.exit(2)
+
+  if "image" not in cfg or "imageport" not in config:
+    print("You need to pass the docker image basename and imageport")
+    sys.exit(2)
+
+
+  if "version" not in cfg:
+    print("You need to pass the docker image version")
     sys.exit(2)
 
   if len(host) == 0:
     # need to select a host
     host = getfreehost(config_dir)
-
+  port = ""
   if ":" not in host:
     port = getport(config_dir, host) 
     host = host + ":" + str(port)
+  else:
+    port = host.split(":")[1]
 
   version = ""
   if "version" in cfg:
@@ -195,9 +222,27 @@ def addapp(config_dir, app, host, cfg):
     print ("server has already been added")
     sys.exit(2)
 
+  imagename = ""
+  if len(version) == 0:
+    imagename = cfg["image"]
+  else:
+    imagename = cfg["image"]+":"+version
+
+  if len(instance) == 0:
+    instance = host+":"+str(port)
+  output,rc = run_container(host, [port,cfg["imageport"]],imagename,instance)
+  if rc != 0:
+    print "Failed to Add App"
+    sys.exit(2)
   try:
     os.mkdir(config_dir+"/"+app)
-    obj = {"url":cfg["url"], "servers":[]}
+    obj = {"image":cfg["image"],
+           "imageport":cfg["imageport"],
+           "servers":[]}
+    if "url" in cfg:
+      obj["url"] = cfg["url"]
+    if "acl" in cfg:
+      obj["acl"] = cfg["acl"]
     obj["servers"].append({"host":host,"version": version, "instance": instance})
     write_config(config_dir, app, obj)
   except OSError,e:
@@ -295,6 +340,75 @@ def returnport(config_dir, host, port):
   fp.write(json.dumps(gcfg))
   fp.close()
  
+def starthaproxy(config_dir, host, cfg):
+  # assumes haproxy has not been started yet
+  fp = open(config_dir+"/haproxy_config","r")
+  try:
+    gcfg=json.loads(fp.read())
+  except:
+    gcfg=[]
+  fp.close()
+  hcfg = {}
+  if "port" in cfg:
+    hcfg["port"] = cfg["port"]
+  else:
+    hcfg["port"] = 80
+
+  hcfg["host"] = host
+  for hap in gcfg:
+    if hap["port"] == hcfg["port"] and hap["host"] == hcfg["host"]:
+      print "Ha Proxy is already started. stop it first!"
+      sys.exit(2)
+  output_dir = mkdtemp()
+  # haproxy always listens on local 80, we will map it some other port on the 
+  # host
+  write_haproxy_config(config_dir, output_dir, 80) 
+  ha_name = host+":"+hcfg["port"]
+  output,rc = driver.starthaproxy(host, output_dir+"/haproxy.cfg",hcfg["port"],ha_name)
+  shutil.rmtree(output_dir)
+  if rc == 0:
+    hcfg["instance"] = ha_name
+    gcfg.append(hcfg)
+    fp = open(config_dir+"/haproxy_config","w")
+    fp.write(json.dumps(gcfg))
+    print "Success"
+    sys.exit(0)
+  else:
+    print "Failed"
+    sys.exit(2)
+
+def stophaproxy(config_dir, host, cfg):
+  # assumes haproxy has not been started yet
+  fp = open(config_dir+"/haproxy_config","r")
+  try:
+    gcfg=json.loads(fp.read())
+  except:
+    print "Failed to find haproxy config"
+    sys.exit(2)
+  fp.close()
+  hcfg = {}
+  if "port" in cfg:
+    hcfg["port"] = cfg["port"]
+  else:
+    hcfg["port"] = 80
+
+  hcfg["host"] = host
+  ncfg = []
+  rc = -1
+  for hap in gcfg:
+    if hap["port"] == hcfg["port"] and hap["host"] == hcfg["host"]:
+      output,rc = driver.stophaproxy(host, hap["instance"])
+      if rc != 0:
+        sys.exit(2)
+    else:
+      ncfg.append(hap)
+  if rc == 0:
+    fp = open(config_dir+"/haproxy_config","w")
+    fp.write(json.dumps(gcfg))
+    print "Success"
+    sys.exit(0)
+  sys.exit(2)
+ 
 def main():
   try:
     opts, args = getopt.getopt(sys.argv[1:], "c:o:h:v:a:", [])
@@ -319,7 +433,13 @@ def main():
       host = a
     elif o == "-v":
       kv = a.split(":")  
-      cfg[kv[0]] = kv[1]
+      if kv[0] in cfg:
+        if type(cfg[kv[0]]) is str:
+          cfg[kv[0]] = [cfg[kv[0]],kv[1]]
+        else:
+          cfg[kv[0]].append(kv[1])
+      else:
+        cfg[kv[0]] = kv[1]
     elif o == "-a":
       app = a
     else:
@@ -330,7 +450,7 @@ def main():
   config_dir = remove_trailing_slash(config_dir)
 
   if option == "none":
-    print("Please pass a proper option (-o) [addhost|rmhost|addserver|cfgserver|rmserver|addapp|rmapp|listconfig|listservers]")
+    print("Please pass a proper option (-o) [addhost|rmhost|addserver|cfgserver|rmserver|addapp|rmapp|listconfig|listservers|starthaproxy|stophaproxy]")
     usage()
     sys.exit(2)
 
@@ -379,6 +499,10 @@ def main():
     rmhost(config_dir, host)
   elif option == "listservers":
     listservers(config_dir, cfg)
+  elif option == "starthaproxy":
+    starthaproxy(config_dir, host, cfg)
+  elif option == "stophaproxy":
+    stophaproxy(config_dir)
   else:
     print("Unknown command:"+option) 
     sys.exit(2)
