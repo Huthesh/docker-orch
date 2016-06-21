@@ -35,6 +35,15 @@ def stop_container(dest, instance):
 def rm_container(dest, instance):
   return run_command(dest,["docker", "rm", instance])
 
+def restarthaproxy(host, cfg_filename, port, name):
+  output,rc = copy_file(host, cfg_filename, "haproxy_build_"+str(port)+"/haproxy.cfg")
+  if rc != 0:
+    print "Failed to copy haproxy config"
+    return output,rc
+  output,rc = run_command(host, ["pwd"])
+  return run_command(host, ["docker","kill","-s", "HUP", name])
+
+
 def starthaproxy(host, cfg_filename, port, name):
   output,rc = run_command(host, ["rm","-rf","haproxy_build_"+str(port)])
   # ignore the error
@@ -46,9 +55,10 @@ def starthaproxy(host, cfg_filename, port, name):
   if rc != 0:
     print "Failed to copy haproxy config"
     return output,rc
+  output,rc = run_command(host, ["pwd"])
   return run_command(host, ["docker","run","-d",
     "--name",name,
-    "-v","haproxy_build_"+str(port)+"/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro",
+    "-v",output.replace("\n","")+"/"+"haproxy_build_"+str(port)+"/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro",
     "-p",str(port)+":80","haproxy:latest"])
 
 def stophaproxy(host, instance):

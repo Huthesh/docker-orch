@@ -2,6 +2,7 @@ import getopt,sys
 import shutil
 import json
 import os
+import driver
 from driver import run_container, stop_container
 from make_config import write_haproxy_config
 from tempfile import mkdtemp
@@ -105,14 +106,17 @@ def addserver(config_dir, app, host, cfg):
   if "instance" in cfg:
     nobj["instance"] = cfg["instance"]
   else:
-    nobj["instance"] = host
+    nobj["instance"] = host.replace(":","_")
   output,rc = run_container(host.split(":")[0], [host.split(":")[1],obj["imageport"]],obj["image"],nobj["instance"])
   if rc != 0:
     print("Failed to start container")
+    returnport(config_dir, host.split(":")[0], host.split(":")[1])
     sys.exit(2)
   obj["servers"].append(nobj)
   write_config(config_dir, app, obj)
   print host
+  #FIXME this assumes haproxy is on 80
+  restarthaproxy(config_dir)
   sys.exit(0)
 
 def rmserver(config_dir, app, host, cfg):
@@ -148,6 +152,7 @@ def rmserver(config_dir, app, host, cfg):
  
   write_config(config_dir, app, obj)
   returnport(config_dir, host.split(":")[0], host.split(":")[1])
+  restarthaproxy(config_dir)
   sys.exit(0)
 
 def listservers(config_dir, cfg):
@@ -233,6 +238,7 @@ def addapp(config_dir, app, host, cfg):
   output,rc = run_container(host.split(":")[0], [port,cfg["imageport"]],imagename,instance)
   if rc != 0:
     print "Failed to Add App"
+    returnport(config_dir, host.split(":")[0], host.split(":")[1])
     sys.exit(2)
   try:
     os.mkdir(config_dir+"/"+app)
@@ -341,15 +347,62 @@ def returnport(config_dir, host, port):
   fp = open(config_dir+"/host_config","w")
   fp.write(json.dumps(gcfg))
   fp.close()
- 
-def starthaproxy(config_dir, host, cfg):
-  # assumes haproxy has not been started yet
-  fp = open(config_dir+"/haproxy_config","r")
+
+def restarthaproxy(config_dir):
+  fp = None
   try:
+    fp = open(config_dir+"/haproxy_config","r")
     gcfg=json.loads(fp.read())
   except:
     gcfg=[]
-  fp.close()
+
+  if fp:
+    fp.close()
+
+  output_dir = mkdtemp()
+  # haproxy always listens on local 80, we will map it some other port on the 
+  # host
+  write_haproxy_config(config_dir, output_dir, 80) 
+  # FIXME we restart each haproxy
+  found = False
+  ncfg = []
+  failed = False
+  for hap in gcfg:
+    found = True
+    ha_name = hap["host"]+"_"+str(hap["port"])
+    output,rc = driver.restarthaproxy(hap["host"], output_dir+"/haproxy.cfg",hap["port"],ha_name)
+    if rc != 0:
+      failed = True
+    else:
+      ncfg.append(hap)
+  shutil.rmtree(output_dir)
+
+  if not found:
+    print "Could not find haproxy"
+    sys.exit(2)
+  if not failed: 
+    print "Success"
+    sys.exit(0)
+  else:
+    # failed to restart to remove the haproxy from the config
+    fp = open(config_dir+"/haproxy_config","w")
+    fp.write(json.dumps(ncfg))
+    print "Failed"
+    sys.exit(2)
+
+
+def starthaproxy(config_dir, host, cfg):
+  # assumes haproxy has not been started yet
+  fp = None
+  try:
+    fp = open(config_dir+"/haproxy_config","r")
+    gcfg=json.loads(fp.read())
+  except:
+    gcfg=[]
+
+  if fp:
+    fp.close()
+
   hcfg = {}
   if "port" in cfg:
     hcfg["port"] = cfg["port"]
@@ -365,7 +418,7 @@ def starthaproxy(config_dir, host, cfg):
   # haproxy always listens on local 80, we will map it some other port on the 
   # host
   write_haproxy_config(config_dir, output_dir, 80) 
-  ha_name = host+":"+hcfg["port"]
+  ha_name = host+"_"+str(hcfg["port"])
   output,rc = driver.starthaproxy(host, output_dir+"/haproxy.cfg",hcfg["port"],ha_name)
   shutil.rmtree(output_dir)
   if rc == 0:
@@ -381,13 +434,15 @@ def starthaproxy(config_dir, host, cfg):
 
 def stophaproxy(config_dir, host, cfg):
   # assumes haproxy has not been started yet
-  fp = open(config_dir+"/haproxy_config","r")
+  fp = None
   try:
+    fp = open(config_dir+"/haproxy_config","r")
     gcfg=json.loads(fp.read())
   except:
     print "Failed to find haproxy config"
     sys.exit(2)
-  fp.close()
+  if fp:
+    fp.close()
   hcfg = {}
   if "port" in cfg:
     hcfg["port"] = cfg["port"]
@@ -406,7 +461,7 @@ def stophaproxy(config_dir, host, cfg):
       ncfg.append(hap)
   if rc == 0:
     fp = open(config_dir+"/haproxy_config","w")
-    fp.write(json.dumps(gcfg))
+    fp.write(json.dumps(ncfg))
     print "Success"
     sys.exit(0)
   sys.exit(2)
@@ -436,7 +491,7 @@ def main():
     elif o == "-v":
       kv = a.split(":")  
       if kv[0] in cfg:
-        if type(cfg[kv[0]]) is str:
+        if type(cfg[kv[0]]) is str or type(cfg[kv[0]]) is unicode:
           cfg[kv[0]] = [cfg[kv[0]],kv[1]]
         else:
           cfg[kv[0]].append(kv[1])
@@ -504,7 +559,7 @@ def main():
   elif option == "starthaproxy":
     starthaproxy(config_dir, host, cfg)
   elif option == "stophaproxy":
-    stophaproxy(config_dir)
+    stophaproxy(config_dir, host, cfg)
   else:
     print("Unknown command:"+option) 
     sys.exit(2)

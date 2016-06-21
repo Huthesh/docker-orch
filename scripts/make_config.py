@@ -47,7 +47,7 @@ def compute_acl(app,obj):
   rules = []
   idx = 0
   if "acl" in obj:
-    if type(obj["acl"]) is str:
+    if type(obj["acl"]) is str or type(obj["acl"]) is unicode:
       rules.append("  acl "+app+str(idx)+" "+obj["acl"]+"\n") 
       idx+=1
     else:
@@ -55,7 +55,7 @@ def compute_acl(app,obj):
         rules.append("  acl "+app+str(idx)+" "+acl+"\n")
         idx += 1
   if "url" in obj:
-    if type(obj["url"]) is str:
+    if type(obj["url"]) is str or type(obj["url"]) is unicode:
       rules.append("  acl "+app+str(idx)+" path_beg -i "+obj["url"]+"\n") 
       idx +=1
     else:
@@ -133,7 +133,7 @@ def main():
   if clean_output(output_dir) == 1:
     print "Output dir cant be removed"
     sys.exit(2)
-  write_haproxy_config(config_dir, output_dir)
+  write_haproxy_config(config_dir, output_dir, port)
 
 if __name__ == "__main__":
   main()
