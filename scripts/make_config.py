@@ -73,7 +73,10 @@ def write_config(outputfp, config_dir, port):
   for app in apps:
     obj = get_app_config(config_dir, app)
     cfgs[app]=obj
-    rules = compute_acl(app,obj):
+    if "defaulturl" in obj:
+      if obj["defaulturl"] == "true":
+        outputfp.write("default_backend srvs_"+app+"\n")
+    rules = compute_acl(app,obj)
     for rule in rules:
       outputfp.write(rule)
     numrules[app] = len(rules)

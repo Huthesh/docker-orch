@@ -187,11 +187,11 @@ def addapp(config_dir, app, host, cfg):
       print("App already exists")
       sys.exit(2)
 
-  if "url" not in cfg and "acl" not in cfg:
-    print ("You need to pass in atleast one url or acl for the app")
+  if "url" not in cfg and "acl" not in cfg and "defaulturl" not in cfg:
+    print ("You need to pass in atleast one url or acl or defaulturl for the app")
     sys.exit(2)
 
-  if "image" not in cfg or "imageport" not in config:
+  if "image" not in cfg or "imageport" not in cfg:
     print("You need to pass the docker image basename and imageport")
     sys.exit(2)
 
@@ -229,8 +229,8 @@ def addapp(config_dir, app, host, cfg):
     imagename = cfg["image"]+":"+version
 
   if len(instance) == 0:
-    instance = host+":"+str(port)
-  output,rc = run_container(host, [port,cfg["imageport"]],imagename,instance)
+    instance = host.replace(":","_")
+  output,rc = run_container(host.split(":")[0], [port,cfg["imageport"]],imagename,instance)
   if rc != 0:
     print "Failed to Add App"
     sys.exit(2)
@@ -243,6 +243,8 @@ def addapp(config_dir, app, host, cfg):
       obj["url"] = cfg["url"]
     if "acl" in cfg:
       obj["acl"] = cfg["acl"]
+    if "defaulturl" in cfg:
+      obj["defaulturl"] = cfg["defaulturl"]
     obj["servers"].append({"host":host,"version": version, "instance": instance})
     write_config(config_dir, app, obj)
   except OSError,e:
