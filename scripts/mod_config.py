@@ -120,8 +120,14 @@ def addserver(config_dir, app, host, cfg):
   print host
   #FIXME this assumes haproxy is on 80
   restarthaproxy(config_dir)
-  sys.exit(0)
+  #sys.exit(0)
 
+def upgrade(config_dir, app, cfg):
+  appcfg = get_app_config(config_dir, app)
+  for server in appcfg["servers"]:
+    addserver(config_dir, app, "", cfg)
+    rmserver(config_dir, app, server["host"], cfg)
+  
 # this does nothing cleanly, it is the big hammer approach
 def teardown(config_dir):
   for app in get_apps(config_dir):
@@ -187,7 +193,7 @@ def rmserver(config_dir, app, host, cfg):
   write_config(config_dir, app, obj)
   returnport(config_dir, host.split(":")[0], host.split(":")[1])
   restarthaproxy(config_dir)
-  sys.exit(0)
+  #sys.exit(0)
 
 def listservers(config_dir, cfg):
   if "version" in cfg and "app" in cfg:
@@ -416,7 +422,7 @@ def restarthaproxy(config_dir):
     sys.exit(2)
   if not failed: 
     print "Success"
-    sys.exit(0)
+    #sys.exit(0)
   else:
     # failed to restart to remove the haproxy from the config
     fp = open(config_dir+"/haproxy_config","w")
@@ -596,6 +602,15 @@ def main():
     stophaproxy(config_dir, host, cfg)
   elif option == "teardown":
     teardown(config_dir)
+  elif option == "upgrade":
+    if len(app) == 0:
+      print("app(-a) is mandatory\n")
+      usage()
+      sys.exit(2) 
+    if "version" not in cfg:
+      print("please specify a new version")
+      sys.exit(2) 
+    upgrade(config_dir, app, cfg)
   else:
     print("Unknown command:"+option) 
     sys.exit(2)
