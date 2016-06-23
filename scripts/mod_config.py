@@ -6,6 +6,7 @@ import driver
 from driver import run_container, stop_container
 from make_config import write_haproxy_config
 from tempfile import mkdtemp
+import tempfile
 def usage():
   print "mod_config.py -c <config dir> -a <app> -o <addserver|addapp|rmserver|rmapp> -h <hostname> -v <optional keyvalues>"
 
@@ -121,6 +122,37 @@ def addserver(config_dir, app, host, cfg):
   restarthaproxy(config_dir)
   sys.exit(0)
 
+# this does nothing cleanly, it is the big hammer approach
+def teardown(config_dir):
+  for app in get_apps(config_dir):
+    cfg = get_app_config(config_dir, app)
+    for server in cfg["servers"]:
+      output,rc = stop_container(server["host"].split(":")[0], server["instance"])
+      if rc != 0:
+        print ("Failed to stop container:" + server["instance"])
+  gcfg = None
+  fp = None
+  try:
+    fp = open(config_dir+"/haproxy_config","r")
+    gcfg=json.loads(fp.read())
+  except:
+    print "Failed to find haproxy config"
+    sys.exit(2)
+  if fp:
+    fp.close()
+  for hap in gcfg:
+    output,rc = driver.stophaproxy(hap["host"], hap["instance"])
+    if rc != 0:
+      print ("Failed to stop haproxy:"+hap["instance"])
+  fd,tmpath = tempfile.mkstemp() 
+  shutil.copy(config_dir + "/global", tmpath)
+  shutil.rmtree(config_dir)
+  os.mkdir(config_dir)
+  shutil.copy(tmpath, config_dir + "/global")
+  os.remove(tmpath)
+  sys.exit(0)
+      
+ 
 def rmserver(config_dir, app, host, cfg):
   if ":" not in host:
     print ("I need the full server name hostname:port to remove")
@@ -562,6 +594,8 @@ def main():
     starthaproxy(config_dir, host, cfg)
   elif option == "stophaproxy":
     stophaproxy(config_dir, host, cfg)
+  elif option == "teardown":
+    teardown(config_dir)
   else:
     print("Unknown command:"+option) 
     sys.exit(2)
