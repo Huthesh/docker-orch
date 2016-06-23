@@ -99,15 +99,17 @@ def addserver(config_dir, app, host, cfg):
 
   nobj = {"host": host}
   version=""
+  fullversion=""
   if "version" in cfg:
     version = cfg["version"] 
+    fullversion=":"+version
   nobj["version"] = version
 
   if "instance" in cfg:
     nobj["instance"] = cfg["instance"]
   else:
     nobj["instance"] = host.replace(":","_")
-  output,rc = run_container(host.split(":")[0], [host.split(":")[1],obj["imageport"]],obj["image"],nobj["instance"])
+  output,rc = run_container(host.split(":")[0], [host.split(":")[1],obj["imageport"]],obj["image"]+fullversion,nobj["instance"])
   if rc != 0:
     print("Failed to start container")
     returnport(config_dir, host.split(":")[0], host.split(":")[1])
